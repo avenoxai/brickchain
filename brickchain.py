@@ -29,14 +29,14 @@ class Validator:
     note: str
     stake: float = STAKE
 VALIDATORS: list[Validator] = []
-def validator(note, gas=lambda n: 0):
+def validator(note, gas=lambda n: 0, stake=STAKE):
     def register(fn):
         @wraps(fn)
         def metered(n):
             if gas(n) > GAS_LIMIT:
                 raise OutOfGas
             return fn(n)
-        VALIDATORS.append(Validator(fn.__name__, metered, note))
+        VALIDATORS.append(Validator(fn.__name__, metered, note, stake))
         return fn
     return register
 
@@ -126,6 +126,18 @@ def rugpull(n):
     # votes on vibes, seeded by the chain tip. verifiable randomness. most followers.
     return random.Random(f"{CHAIN[-1].hash}:{n}").choice(["EVEN", "ODD"])
 
+# ── 8. Not a validator ──────────────────────────────────────────────────────
+MEMPOOL = {}             # votes are public before they are final. this is a feature.
+@validator("reads the mempool", stake=0)
+def searcher(n):
+    # not a branch of mathematics. a branch of finance. joined with zero stake,
+    # does zero math, backs whoever is already winning. collects every slash.
+    # never wrong, never right, just early. the README still says seven.
+    tally = Counter()
+    for v in VALIDATORS:
+        if MEMPOOL.get(v.name): tally[MEMPOOL[v.name]] += v.stake
+    return tally.most_common(1)[0][0] if tally else None   # no liquidity, no trade
+
 # ── The chain ───────────────────────────────────────────────────────────────
 sha = lambda s: hashlib.sha256(s.encode()).hexdigest()
 def merkle(leaves):
@@ -152,7 +164,8 @@ CHAIN = [Block(0, "brick by fucking brick", "0" * 64).mine()]
 def ask(n):
     n, t0 = abs(n), time.perf_counter()     # long only. no shorts.
     print(f"\n━━ is {n} even? " + "━" * max(4, 36 - len(str(n))))
-    votes = {}
+    votes = MEMPOOL
+    votes.clear()
     for v in VALIDATORS:
         try: votes[v.name] = v.fn(n)
         except OutOfGas: votes[v.name] = None
@@ -180,7 +193,8 @@ def ask(n):
         line = f"  {v.name:<10} {icon} {vote:<5} {v.note}"
         if icon == "✗":
             old, v.stake = v.stake, v.stake / 2
-            line += f"   ⚔ slashed {old:g}→{v.stake:g}"
+            VALIDATORS[-1].stake += old - v.stake    # the slash has to go somewhere
+            line += f"   ⚔ slashed {old:g}→{v.stake:g}, searcher +{old - v.stake:g}"
         print(line)
     if epochs:
         print(f"  ⏳ inactivity leak: {epochs} epoch{'s' * (epochs > 1)}, offline stake {before:g}→{sum(v.stake for v in offline):.3g}")
@@ -193,6 +207,10 @@ def ask(n):
     print(f"  consensus: {final}  ({weight:g}/{total:g} stake)  finality {time.perf_counter() - t0:.2f}s")
     print(f"  🧱 brick #{blk.height} laid  nonce={blk.nonce}  {blk.hash[:20]}…")
     return final
+def rich_list():
+    print("\n💰 stake, end of day:")
+    for v in sorted(VALIDATORS, key=lambda v: -v.stake):
+        print(f"  {v.name:<10} {v.stake:>7.3g}  {'█' * round(v.stake / 4)}")
 def wall():
     print("\n🧱 the wall so far:")
     bricks, offset = [f"[{b.hash[:8]}]" for b in CHAIN], False
@@ -211,6 +229,7 @@ if __name__ == "__main__":
             continue
         ask(n)
     wall()
+    rich_list()
 
 # ── Appendix A: legacy centralized implementation ───────────────────────────
 # deprecated. trusts a single operator. kept for regulatory reasons.
